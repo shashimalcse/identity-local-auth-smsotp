@@ -75,6 +75,10 @@
             <artifactId>org.wso2.carbon.identity.captcha</artifactId>
         </dependency>
         <dependency>
+            <groupId>org.wso2.carbon.identity.governance</groupId>
+            <artifactId>org.wso2.carbon.identity.recovery</artifactId>
+        </dependency>
+        <dependency>
             <groupId>org.wso2.carbon.identity.event.handler.accountlock</groupId>
             <artifactId>org.wso2.carbon.identity.handler.event.account.lock</artifactId>
         </dependency>
@@ -162,6 +166,8 @@
                             org.wso2.carbon.identity.notification.sender.tenant.config.dto; version="${identity.event.handler.notification.imp.pkg.version.range}",
                             org.wso2.carbon.identity.notification.sender.tenant.config; version="${identity.event.handler.notification.imp.pkg.version.range}",
                             org.wso2.carbon.identity.captcha.*; version="${identity.governance.imp.pkg.version.range}",
+                            org.wso2.carbon.identity.recovery; version="${identity.governance.imp.pkg.version.range}",
+                            org.wso2.carbon.identity.recovery.util; version="${identity.governance.imp.pkg.version.range}",
 
                             org.wso2.carbon.idp.mgt.*; version="${carbon.identity.framework.imp.pkg.version.range}",
 

@@ -190,6 +190,11 @@
                     </exclusion>
                 </exclusions>
             </dependency>
+            <dependency>
+                <groupId>org.wso2.carbon.identity.governance</groupId>
+                <artifactId>org.wso2.carbon.identity.recovery</artifactId>
+                <version>${identity.governance.version}</version>
+            </dependency>
 
             <dependency>
                 <groupId>org.wso2.carbon.identity.event.handler.accountlock</groupId>
