@@ -221,7 +221,7 @@ public class SMSOTPMobileNumberEnrollmentTest {
         context.setProperty(PENDING_VALUE, MOBILE);
         authenticator.getEnrollmentHandler().recordOTPSent(context, MOBILE);
 
-        authenticator.getEnrollmentHandler().completeEnrollment(context, true);
+        authenticator.getEnrollmentHandler().completeEnrollment(context);
 
         ArgumentCaptor<Map<String, String>> claimsCaptor = ArgumentCaptor.forClass(Map.class);
         verify(userStoreManager).setUserClaimValues(anyString(), claimsCaptor.capture(), isNull());
@@ -239,7 +239,7 @@ public class SMSOTPMobileNumberEnrollmentTest {
         context.setProperty(PENDING_VALUE, MOBILE);
 
         try {
-            authenticator.getEnrollmentHandler().completeEnrollment(context, true);
+            authenticator.getEnrollmentHandler().completeEnrollment(context);
         } catch (AuthenticationFailedException e) {
             assertEquals(e.getErrorCode(),
                     "SMS-" + AuthenticatorConstants.ErrorMessages.ERROR_CODE_ERROR_ENROLLING_VALUE.getCode());

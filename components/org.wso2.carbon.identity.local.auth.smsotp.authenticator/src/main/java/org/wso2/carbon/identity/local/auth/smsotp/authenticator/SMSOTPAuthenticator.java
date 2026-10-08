@@ -968,8 +968,14 @@ public class SMSOTPAuthenticator extends AbstractOTPAuthenticator implements Loc
 
         List<AuthenticatorParamMetadata> authenticatorParamMetadataList = new ArrayList<>();
         List<String> requiredParams = new ArrayList<>();
-        if (getEnrollmentHandler().addAuthInitiationParams(context, authenticatorParamMetadataList, requiredParams)) {
-            LOG.debug("Requesting a mobile number to enroll, since the user does not have one.");
+        if (context != null && getEnrollmentHandler().isAwaitingValue(context)) {
+            // The user does not have a mobile number, and is requested to enter one to enroll.
+            AuthenticatorParamMetadata mobileNumberMetadata = new AuthenticatorParamMetadata(
+                    SMSOTPConstants.MOBILE_NUMBER, SMSOTPConstants.MobileNumberEnrollment.DISPLAY_MOBILE_NUMBER,
+                    FrameworkConstants.AuthenticatorParamType.STRING, 0, Boolean.FALSE,
+                    SMSOTPConstants.MobileNumberEnrollment.MOBILE_NUMBER_PARAM_KEY);
+            authenticatorParamMetadataList.add(mobileNumberMetadata);
+            requiredParams.add(SMSOTPConstants.MOBILE_NUMBER);
         } else if (authenticatedUser == null) {
             AuthenticatorParamMetadata usernameMetadata = new AuthenticatorParamMetadata(
                     USERNAME, DISPLAY_USERNAME, FrameworkConstants.AuthenticatorParamType.STRING,
@@ -1054,7 +1060,7 @@ public class SMSOTPAuthenticator extends AbstractOTPAuthenticator implements Loc
         context.removeProperty(SMSOTPConstants.IS_REDIRECT_TO_SMS_OTP);
         super.processAuthenticationResponse(request, response, context);
         // Reaching here means the OTP is verified, since SMS OTP authentication succeeds only by verifying the OTP.
-        getEnrollmentHandler().completeEnrollment(context, true);
+        getEnrollmentHandler().completeEnrollment(context);
     }
 
     @Override

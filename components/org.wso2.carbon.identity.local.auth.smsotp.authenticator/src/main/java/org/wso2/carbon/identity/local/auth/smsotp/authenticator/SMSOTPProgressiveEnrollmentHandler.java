@@ -60,18 +60,6 @@ public class SMSOTPProgressiveEnrollmentHandler extends AbstractOTPProgressiveEn
     }
 
     @Override
-    protected String getValueParameterDisplayName() {
-
-        return MobileNumberEnrollment.DISPLAY_MOBILE_NUMBER;
-    }
-
-    @Override
-    protected String getValueParameterI18nKey() {
-
-        return MobileNumberEnrollment.MOBILE_NUMBER_PARAM_KEY;
-    }
-
-    @Override
     protected String getMessageKeyPrefix() {
 
         return MobileNumberEnrollment.MESSAGE_KEY_PREFIX;
