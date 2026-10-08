@@ -153,14 +153,6 @@ public class AuthenticatorUtils {
     }
 
     /**
-     * Get the SmsOtpAuthenticatorServerException with given error details.
-     *
-     * @param error     ErrorMessages.
-     * @param throwable Throwable.
-     * @param data      Meta data.
-     * @return SmsOtpAuthenticatorServerException.
-     */
-    /**
      * Get the URL of the page which requests a mobile number from a user who does not have one.
      *
      * @param mobileNumberRequestPageUrl Page URL configured for the authenticator. The default page is used when this
@@ -180,6 +172,14 @@ public class AuthenticatorUtils {
         }
     }
 
+    /**
+     * Get the SmsOtpAuthenticatorServerException with given error details.
+     *
+     * @param error     ErrorMessages.
+     * @param throwable Throwable.
+     * @param data      Meta data.
+     * @return SmsOtpAuthenticatorServerException.
+     */
     public static SMSOTPAuthenticatorServerException handleServerException(SMSOTPConstants.ErrorMessages error,
                                                                            Throwable throwable, Object... data) {
 
