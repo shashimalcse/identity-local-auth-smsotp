@@ -43,6 +43,7 @@ import org.wso2.carbon.identity.application.common.model.ServiceProvider;
 import org.wso2.carbon.identity.auth.otp.core.AbstractOTPAuthenticator;
 import org.wso2.carbon.identity.auth.otp.core.PasswordlessOTPAuthenticator;
 import org.wso2.carbon.identity.auth.otp.core.constant.AuthenticatorConstants;
+import org.wso2.carbon.identity.auth.otp.core.enrollment.AbstractOTPProgressiveEnrollmentHandler;
 import org.wso2.carbon.identity.auth.otp.core.model.OTP;
 import org.wso2.carbon.identity.auth.otp.core.model.OTPResendClaims;
 import org.wso2.carbon.identity.captcha.connector.recaptcha.AbstractOTPCaptchaConnector;
@@ -60,8 +61,6 @@ import org.wso2.carbon.identity.local.auth.smsotp.authenticator.constant.SMSOTPC
 import org.wso2.carbon.identity.local.auth.smsotp.authenticator.exception.SMSOTPAuthenticatorServerException;
 import org.wso2.carbon.identity.local.auth.smsotp.authenticator.internal.AuthenticatorDataHolder;
 import org.wso2.carbon.identity.local.auth.smsotp.authenticator.util.AuthenticatorUtils;
-import org.wso2.carbon.identity.recovery.IdentityRecoveryConstants;
-import org.wso2.carbon.identity.recovery.util.Utils;
 import org.wso2.carbon.idp.mgt.IdentityProviderManagementException;
 import org.wso2.carbon.user.api.UserRealm;
 import org.wso2.carbon.user.api.UserStoreException;
@@ -70,14 +69,11 @@ import org.wso2.carbon.user.core.common.AbstractUserStoreManager;
 import org.wso2.carbon.utils.DiagnosticLog;
 import org.wso2.carbon.utils.multitenancy.MultitenantUtils;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.regex.Pattern;
-import java.util.regex.PatternSyntaxException;
 
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
@@ -107,6 +103,8 @@ public class SMSOTPAuthenticator extends AbstractOTPAuthenticator implements Loc
 
     private static final Log LOG = LogFactory.getLog(SMSOTPAuthenticator.class);
     private static final long serialVersionUID = 850244886656426295L;
+    private static final AbstractOTPProgressiveEnrollmentHandler enrollmentHandler =
+            new SMSOTPProgressiveEnrollmentHandler();
 
     private static final String SMS_OTP_SENT = "SMSOTPSent";
     private static final String MASKED_MOBILE_NUMBER = "maskedMobileNumber";
@@ -155,7 +153,7 @@ public class SMSOTPAuthenticator extends AbstractOTPAuthenticator implements Loc
         }
         if (context.isLogoutRequest()) {
             return AuthenticatorConstants.AuthenticationScenarios.LOGOUT;
-        } else if (isMobileNumberSubmission(request, context)) {
+        } else if (getEnrollmentHandler().isValueSubmission(request, context)) {
             // A mobile number submitted for enrollment initiates sending an OTP to that number.
             return AuthenticatorConstants.AuthenticationScenarios.INITIAL_OTP;
         } else if (!SMS_OTP_AUTHENTICATOR_NAME.equals(context.getCurrentAuthenticator()) ||
@@ -394,11 +392,8 @@ public class SMSOTPAuthenticator extends AbstractOTPAuthenticator implements Loc
         String tenantDomain = authenticationContext.getTenantDomain();
         String mobileNumber = resolveMobileNoOfAuthenticatedUser(authenticatedUser, tenantDomain,
                 authenticationContext, isInitialFederationAttempt);
-        if (StringUtils.isNotBlank(getPendingMobileNumber(authenticationContext))) {
-            // Binds the OTP to the number it is sent to, so that only that number can be enrolled with the OTP.
-            authenticationContext.setProperty(SMSOTPConstants.MobileNumberEnrollment.OTP_SENT_TO_MOBILE_NUMBER,
-                    mobileNumber);
-        }
+        // Binds the OTP to the number it is sent to, so that only that number can be enrolled with the OTP.
+        getEnrollmentHandler().recordOTPSent(authenticationContext, mobileNumber);
 
         Map<String, Object> metaProperties = new HashMap<>();
         metaProperties.put(IdentityEventConstants.EventProperty.NOTIFICATION_CHANNEL,
@@ -928,7 +923,7 @@ public class SMSOTPAuthenticator extends AbstractOTPAuthenticator implements Loc
             if (StringUtils.isBlank(mobile)) {
                 /* A user who does not have a mobile number may be enrolling one. The OTP is then sent to the number
                  pending enrollment, which is saved to the profile only after the OTP is verified. */
-                mobile = getPendingMobileNumber(context);
+                mobile = getEnrollmentHandler().getPendingValue(context);
             }
         }
         return mobile;
@@ -973,13 +968,8 @@ public class SMSOTPAuthenticator extends AbstractOTPAuthenticator implements Loc
 
         List<AuthenticatorParamMetadata> authenticatorParamMetadataList = new ArrayList<>();
         List<String> requiredParams = new ArrayList<>();
-        if (context != null && isAwaitingMobileNumber(context)) {
-            AuthenticatorParamMetadata mobileNumberMetadata = new AuthenticatorParamMetadata(
-                    SMSOTPConstants.MOBILE_NUMBER, SMSOTPConstants.MobileNumberEnrollment.DISPLAY_MOBILE_NUMBER,
-                    FrameworkConstants.AuthenticatorParamType.STRING, 0, Boolean.FALSE,
-                    SMSOTPConstants.MobileNumberEnrollment.MOBILE_NUMBER_PARAM_KEY);
-            authenticatorParamMetadataList.add(mobileNumberMetadata);
-            requiredParams.add(SMSOTPConstants.MOBILE_NUMBER);
+        if (getEnrollmentHandler().addAuthInitiationParams(context, authenticatorParamMetadataList, requiredParams)) {
+            LOG.debug("Requesting a mobile number to enroll, since the user does not have one.");
         } else if (authenticatedUser == null) {
             AuthenticatorParamMetadata usernameMetadata = new AuthenticatorParamMetadata(
                     USERNAME, DISPLAY_USERNAME, FrameworkConstants.AuthenticatorParamType.STRING,
@@ -1051,7 +1041,7 @@ public class SMSOTPAuthenticator extends AbstractOTPAuthenticator implements Loc
     protected void initiateAuthenticationRequest(HttpServletRequest request, HttpServletResponse response,
                                                  AuthenticationContext context) throws AuthenticationFailedException {
 
-        if (handleMobileNumberEnrollment(request, response, context)) {
+        if (getEnrollmentHandler().handleInitiation(request, response, context)) {
             return;
         }
         super.initiateAuthenticationRequest(request, response, context);
@@ -1063,8 +1053,8 @@ public class SMSOTPAuthenticator extends AbstractOTPAuthenticator implements Loc
 
         context.removeProperty(SMSOTPConstants.IS_REDIRECT_TO_SMS_OTP);
         super.processAuthenticationResponse(request, response, context);
-        // Reaching here means the OTP sent to the mobile number pending enrollment, if any, is verified.
-        completeMobileNumberEnrollment(context);
+        // Reaching here means the OTP is verified, since SMS OTP authentication succeeds only by verifying the OTP.
+        getEnrollmentHandler().completeEnrollment(context, true);
     }
 
     @Override
@@ -1080,462 +1070,12 @@ public class SMSOTPAuthenticator extends AbstractOTPAuthenticator implements Loc
     }
 
     /**
-     * Handle enrolling a mobile number for a user who does not have one configured, when mobile number enrollment is
-     * enabled. The user is requested to enter a mobile number, an OTP is sent to that number, and the number is saved
-     * to the user profile only after the OTP is verified.
+     * Get the handler which lets a user who does not have a mobile number enroll one during the authentication flow.
      *
-     * @param request  HttpServletRequest.
-     * @param response HttpServletResponse.
-     * @param context  AuthenticationContext.
-     * @return True if the request is handled by redirecting the user, false if the OTP flow should continue.
-     * @throws AuthenticationFailedException If an error occurred while handling the enrollment.
+     * @return Mobile number enrollment handler.
      */
-    protected boolean handleMobileNumberEnrollment(HttpServletRequest request, HttpServletResponse response,
-                                                   AuthenticationContext context)
-            throws AuthenticationFailedException {
+    protected AbstractOTPProgressiveEnrollmentHandler getEnrollmentHandler() {
 
-        AuthenticatedUser user = resolveUserEligibleForMobileNumberEnrollment(context);
-        if (user == null) {
-            clearMobileNumberEnrollment(context);
-            return false;
-        }
-        if (isMobileNumberSubmission(request, context)) {
-            return handleSubmittedMobileNumber(request, response, context, user);
-        }
-        if (StringUtils.isNotBlank(getPendingMobileNumber(context))) {
-            // An OTP is sent to the number pending enrollment. Resending and verifying it continue as usual.
-            return false;
-        }
-        String errorQueryParams = (String) context.getProperty(
-                SMSOTPConstants.MobileNumberEnrollment.ENROLLMENT_ERROR);
-        context.removeProperty(SMSOTPConstants.MobileNumberEnrollment.ENROLLMENT_ERROR);
-        redirectToMobileNumberRequestPage(request, response, context, errorQueryParams);
-        return true;
-    }
-
-    /**
-     * Resolve the user, if the user is eligible to enroll a mobile number in the current authentication flow.
-     *
-     * @param context AuthenticationContext.
-     * @return The user if eligible to enroll a mobile number, null otherwise.
-     * @throws AuthenticationFailedException If an error occurred while resolving the user.
-     */
-    private AuthenticatedUser resolveUserEligibleForMobileNumberEnrollment(AuthenticationContext context)
-            throws AuthenticationFailedException {
-
-        // A mobile number is enrolled only for a user who is identified by a preceding authentication step.
-        if (isOTPAsFirstFactor(context) || !isMobileNumberEnrollmentEnabled(context)) {
-            return null;
-        }
-        AuthenticatedUser user = getSubjectAuthenticatedUser(context);
-        // Attributes of federated users are managed by the federated identity provider.
-        if (user == null || user.isFederatedUser()) {
-            return null;
-        }
-        // A mobile number configured for the user is never replaced from the authentication flow.
-        if (StringUtils.isNotBlank(getUserClaimValueFromUserStore(user, context))) {
-            return null;
-        }
-        if (AuthenticatorUtils.isAccountLocked(user)) {
-            return null;
-        }
-        return user;
-    }
-
-    /**
-     * Check whether mobile number enrollment is enabled. An application can opt out from the authentication script,
-     * but cannot enable the enrollment when it is not enabled for the organization.
-     *
-     * @param context AuthenticationContext.
-     * @return True if mobile number enrollment is enabled.
-     * @throws AuthenticationFailedException If an error occurred while getting the configuration.
-     */
-    private boolean isMobileNumberEnrollmentEnabled(AuthenticationContext context)
-            throws AuthenticationFailedException {
-
-        Map<String, String> runtimeParams = getRuntimeParams(context);
-        if (MapUtils.isNotEmpty(runtimeParams)) {
-            String enrolUser = runtimeParams.get(
-                    SMSOTPConstants.MobileNumberEnrollment.ENROL_USER_IN_AUTHENTICATION_FLOW);
-            if (StringUtils.isNotBlank(enrolUser) && !Boolean.parseBoolean(enrolUser)) {
-                return false;
-            }
-        }
-        try {
-            return Boolean.parseBoolean(AuthenticatorUtils.getSmsAuthenticatorConfig(
-                    SMSOTPConstants.ConnectorConfig.SMS_OTP_ENROL_USER_IN_AUTHENTICATION_FLOW,
-                    context.getTenantDomain()));
-        } catch (SMSOTPAuthenticatorServerException e) {
-            throw handleAuthErrorScenario(AuthenticatorConstants.ErrorMessages.ERROR_CODE_ERROR_GETTING_CONFIG, e);
-        }
-    }
-
-    /**
-     * Check whether the request submits a mobile number for enrollment, while a mobile number is requested from the
-     * user or is pending enrollment.
-     *
-     * @param request HttpServletRequest.
-     * @param context AuthenticationContext.
-     * @return True if a mobile number is submitted for enrollment.
-     */
-    private boolean isMobileNumberSubmission(HttpServletRequest request, AuthenticationContext context) {
-
-        return SMS_OTP_AUTHENTICATOR_NAME.equals(context.getCurrentAuthenticator())
-                && StringUtils.isNotBlank(request.getParameter(SMSOTPConstants.MOBILE_NUMBER))
-                && StringUtils.isBlank(request.getParameter(CODE))
-                && !Boolean.parseBoolean(request.getParameter(RESEND))
-                && (isAwaitingMobileNumber(context) || StringUtils.isNotBlank(getPendingMobileNumber(context)));
-    }
-
-    /**
-     * Handle a mobile number submitted for enrollment. A valid number is kept as pending enrollment, so that the OTP
-     * is sent to it. A number is never saved to the user profile from here.
-     *
-     * @param request  HttpServletRequest.
-     * @param response HttpServletResponse.
-     * @param context  AuthenticationContext.
-     * @param user     User who enrolls the mobile number.
-     * @return True if the request is handled by redirecting the user, false if an OTP should be sent to the number.
-     * @throws AuthenticationFailedException If an error occurred while handling the mobile number.
-     */
-    private boolean handleSubmittedMobileNumber(HttpServletRequest request, HttpServletResponse response,
-                                                AuthenticationContext context, AuthenticatedUser user)
-            throws AuthenticationFailedException {
-
-        String mobileNumber = normalizeMobileNumber(request.getParameter(SMSOTPConstants.MOBILE_NUMBER));
-        if (!isValidMobileNumber(mobileNumber, context.getTenantDomain())) {
-            logMobileNumberEnrollment("The mobile number submitted for enrollment is not valid.", user, null,
-                    DiagnosticLog.ResultStatus.FAILED);
-            redirectToMobileNumberRequestPage(request, response, context,
-                    SMSOTPConstants.MobileNumberEnrollment.ERROR_MOBILE_NUMBER_INVALID_QUERY_PARAMS);
-            return true;
-        }
-        if (!mobileNumber.equals(getPendingMobileNumber(context))) {
-            int enrollmentAttempts = getMobileNumberEnrollmentAttempts(context);
-            if (enrollmentAttempts >= getMaximumMobileNumberEnrollmentAttempts()) {
-                logMobileNumberEnrollment("The maximum number of mobile numbers allowed to be submitted for " +
-                        "enrollment is exceeded.", user, null, DiagnosticLog.ResultStatus.FAILED);
-                invalidateOTP(context);
-                context.removeProperty(SMSOTPConstants.MobileNumberEnrollment.AWAITING_MOBILE_NUMBER);
-                context.removeProperty(SMSOTPConstants.MobileNumberEnrollment.PENDING_MOBILE_NUMBER);
-                redirectToEnrollmentErrorPage(request, response, context,
-                        SMSOTPConstants.MobileNumberEnrollment.ERROR_ENROLLMENT_ATTEMPTS_EXCEEDED_QUERY_PARAMS);
-                return true;
-            }
-            context.setProperty(SMSOTPConstants.MobileNumberEnrollment.ENROLLMENT_ATTEMPTS, enrollmentAttempts + 1);
-            context.setProperty(SMSOTPConstants.MobileNumberEnrollment.PENDING_MOBILE_NUMBER, mobileNumber);
-            /* Invalidates an OTP sent to an earlier number. Otherwise, it could verify the new number if sending an
-             OTP to the new number is not allowed, such as when the resend limit is exceeded. */
-            invalidateOTP(context);
-        }
-        context.removeProperty(SMSOTPConstants.MobileNumberEnrollment.AWAITING_MOBILE_NUMBER);
-        // An OTP is sent to the submitted number afresh. Hence, failures of an earlier OTP are not carried forward.
-        context.setRetrying(false);
-        logMobileNumberEnrollment("Sending an OTP to verify the mobile number submitted for enrollment.", user,
-                mobileNumber, DiagnosticLog.ResultStatus.SUCCESS);
-        return false;
-    }
-
-    /**
-     * Save the mobile number pending enrollment to the user profile, once the OTP sent to it is verified.
-     *
-     * @param context AuthenticationContext.
-     * @throws AuthenticationFailedException If the mobile number could not be saved.
-     */
-    protected void completeMobileNumberEnrollment(AuthenticationContext context)
-            throws AuthenticationFailedException {
-
-        String mobileNumber = getPendingMobileNumber(context);
-        if (StringUtils.isBlank(mobileNumber)) {
-            return;
-        }
-        Object otpSentToMobileNumber = context.getProperty(
-                SMSOTPConstants.MobileNumberEnrollment.OTP_SENT_TO_MOBILE_NUMBER);
-        // The verified OTP is consumed. Hence, the number cannot be saved through another attempt with the same OTP.
-        context.removeProperty(SMSOTPConstants.MobileNumberEnrollment.PENDING_MOBILE_NUMBER);
-        context.removeProperty(SMSOTPConstants.MobileNumberEnrollment.AWAITING_MOBILE_NUMBER);
-        context.removeProperty(SMSOTPConstants.MobileNumberEnrollment.OTP_SENT_TO_MOBILE_NUMBER);
-
-        AuthenticatedUser user = getSubjectAuthenticatedUser(context);
-        if (user == null || user.isFederatedUser()) {
-            clearMobileNumberEnrollment(context);
-            return;
-        }
-        if (!mobileNumber.equals(otpSentToMobileNumber)) {
-            // Possession of the number is proven only by an OTP sent to that number.
-            context.setProperty(SMSOTPConstants.MobileNumberEnrollment.ENROLLMENT_ERROR,
-                    SMSOTPConstants.MobileNumberEnrollment.ERROR_ENROLLMENT_FAILED_QUERY_PARAMS);
-            logMobileNumberEnrollment("The mobile number is not enrolled since the verified OTP was not sent to " +
-                    "that number.", user, null, DiagnosticLog.ResultStatus.FAILED);
-            throw new AuthenticationFailedException(
-                    SMSOTPConstants.ErrorMessages.ERROR_CODE_ERROR_ENROLLING_MOBILE_NUMBER.getCode(),
-                    String.format(SMSOTPConstants.ErrorMessages.ERROR_CODE_ERROR_ENROLLING_MOBILE_NUMBER.getMessage(),
-                            user.getLoggableMaskedUserId()));
-        }
-        String existingMobileNumber = getUserClaimValueFromUserStore(user, context);
-        if (StringUtils.isNotBlank(existingMobileNumber)) {
-            if (existingMobileNumber.equals(mobileNumber)) {
-                clearMobileNumberEnrollment(context);
-                return;
-            }
-            // A mobile number configured while the enrollment was in progress is never replaced.
-            logMobileNumberEnrollment("The mobile number is not enrolled since another mobile number was configured " +
-                    "for the user while the enrollment was in progress.", user, null,
-                    DiagnosticLog.ResultStatus.FAILED);
-            throw new AuthenticationFailedException(
-                    SMSOTPConstants.ErrorMessages.ERROR_CODE_MOBILE_NUMBER_ALREADY_CONFIGURED.getCode(),
-                    String.format(SMSOTPConstants.ErrorMessages.ERROR_CODE_MOBILE_NUMBER_ALREADY_CONFIGURED.getMessage(),
-                            user.getLoggableMaskedUserId()));
-        }
-
-        Map<String, String> claims = new HashMap<>();
-        claims.put(SMSOTPConstants.Claims.MOBILE_CLAIM, mobileNumber);
-        // The number is verified by the OTP sent to it.
-        claims.put(SMSOTPConstants.Claims.MOBILE_VERIFIED_CLAIM, Boolean.TRUE.toString());
-        UserStoreManager userStoreManager = getUserStoreManager(user);
-        try {
-            /* Mobile number updates initiate a verification of the new number when mobile number verification is
-             enabled. That is skipped since the number is already verified. */
-            Utils.setThreadLocalToSkipSendingSmsOtpVerificationOnUpdate(IdentityRecoveryConstants
-                    .SkipMobileNumberVerificationOnUpdateStates.SKIP_ON_SMS_OTP_FLOW.toString());
-            userStoreManager.setUserClaimValues(
-                    MultitenantUtils.getTenantAwareUsername(user.toFullQualifiedUsername()), claims, null);
-        } catch (UserStoreException e) {
-            // The reason is not sent to the user, since it is not guaranteed to be free of internal details.
-            context.setProperty(SMSOTPConstants.MobileNumberEnrollment.ENROLLMENT_ERROR,
-                    SMSOTPConstants.MobileNumberEnrollment.ERROR_ENROLLMENT_FAILED_QUERY_PARAMS);
-            logMobileNumberEnrollment("Failed to save the verified mobile number to the user profile.", user, null,
-                    DiagnosticLog.ResultStatus.FAILED);
-            throw new AuthenticationFailedException(
-                    SMSOTPConstants.ErrorMessages.ERROR_CODE_ERROR_ENROLLING_MOBILE_NUMBER.getCode(),
-                    String.format(SMSOTPConstants.ErrorMessages.ERROR_CODE_ERROR_ENROLLING_MOBILE_NUMBER.getMessage(),
-                            user.getLoggableMaskedUserId()), e);
-        } finally {
-            Utils.unsetThreadLocalToSkipSendingSmsOtpVerificationOnUpdate();
-        }
-        clearMobileNumberEnrollment(context);
-        logMobileNumberEnrollment("The mobile number is enrolled successfully.", user, mobileNumber,
-                DiagnosticLog.ResultStatus.SUCCESS);
-    }
-
-    /**
-     * Redirect the user to the page which requests a mobile number.
-     *
-     * @param request          HttpServletRequest.
-     * @param response         HttpServletResponse.
-     * @param context          AuthenticationContext.
-     * @param errorQueryParams Query params of the error to be shown on the page. Can be null.
-     * @throws AuthenticationFailedException If an error occurred while redirecting.
-     */
-    private void redirectToMobileNumberRequestPage(HttpServletRequest request, HttpServletResponse response,
-                                                   AuthenticationContext context, String errorQueryParams)
-            throws AuthenticationFailedException {
-
-        StringBuilder queryParams = new StringBuilder(FrameworkUtils.getQueryStringWithFrameworkContextId(
-                context.getQueryParams(), context.getCallerSessionKey(), context.getContextIdentifier()))
-                .append(SMSOTPConstants.AUTHENTICATORS_QUERY_PARAM).append(getName())
-                .append(AuthenticatorUtils.getMultiOptionURIQueryParam(request));
-        if (StringUtils.isNotBlank(errorQueryParams)) {
-            queryParams.append(errorQueryParams);
-        }
-        context.setProperty(SMSOTPConstants.MobileNumberEnrollment.AWAITING_MOBILE_NUMBER, true);
-        try {
-            String mobileNumberRequestPage = AuthenticatorUtils.getMobileNumberRequestPageUrl(
-                    getAuthenticatorParameter(
-                            SMSOTPConstants.MobileNumberEnrollment.MOBILE_NUMBER_REQUEST_PAGE_URL_CONFIG));
-            response.sendRedirect(FrameworkUtils.appendQueryParamsStringToUrl(mobileNumberRequestPage,
-                    queryParams.toString()));
-        } catch (IOException e) {
-            throw new AuthenticationFailedException(
-                    SMSOTPConstants.ErrorMessages.ERROR_CODE_REDIRECTING_TO_MOBILE_NUMBER_REQUEST_PAGE.getCode(),
-                    SMSOTPConstants.ErrorMessages.ERROR_CODE_REDIRECTING_TO_MOBILE_NUMBER_REQUEST_PAGE.getMessage(), e);
-        }
-    }
-
-    /**
-     * Redirect the user to the error page, when the mobile number enrollment cannot be continued.
-     *
-     * @param request          HttpServletRequest.
-     * @param response         HttpServletResponse.
-     * @param context          AuthenticationContext.
-     * @param errorQueryParams Query params of the error to be shown on the page.
-     * @throws AuthenticationFailedException If an error occurred while redirecting.
-     */
-    private void redirectToEnrollmentErrorPage(HttpServletRequest request, HttpServletResponse response,
-                                               AuthenticationContext context, String errorQueryParams)
-            throws AuthenticationFailedException {
-
-        String queryParams = FrameworkUtils.getQueryStringWithFrameworkContextId(context.getQueryParams(),
-                context.getCallerSessionKey(), context.getContextIdentifier())
-                + SMSOTPConstants.AUTHENTICATORS_QUERY_PARAM + getName() + errorQueryParams
-                + AuthenticatorUtils.getMultiOptionURIQueryParam(request);
-        try {
-            response.sendRedirect(FrameworkUtils.appendQueryParamsStringToUrl(getErrorPageURL(context), queryParams));
-        } catch (IOException e) {
-            throw new AuthenticationFailedException(
-                    SMSOTPConstants.ErrorMessages.ERROR_CODE_ERROR_REDIRECTING_TO_ERROR_PAGE.getCode(),
-                    SMSOTPConstants.ErrorMessages.ERROR_CODE_ERROR_REDIRECTING_TO_ERROR_PAGE.getMessage(), e);
-        }
-    }
-
-    /**
-     * Remove whitespaces and hyphens, which are commonly used to format mobile numbers.
-     *
-     * @param mobileNumber Mobile number submitted by the user.
-     * @return Mobile number without formatting characters, or null if blank.
-     */
-    private static String normalizeMobileNumber(String mobileNumber) {
-
-        if (StringUtils.isBlank(mobileNumber)) {
-            return null;
-        }
-        return mobileNumber.replaceAll("[\\s-]", StringUtils.EMPTY);
-    }
-
-    /**
-     * Validate a mobile number submitted for enrollment against the regex configured for the organization, or the
-     * default regex when none is configured.
-     *
-     * @param mobileNumber Normalized mobile number.
-     * @param tenantDomain Tenant domain.
-     * @return True if the mobile number is valid.
-     * @throws AuthenticationFailedException If an error occurred while getting the configuration.
-     */
-    private boolean isValidMobileNumber(String mobileNumber, String tenantDomain)
-            throws AuthenticationFailedException {
-
-        if (StringUtils.isBlank(mobileNumber)
-                || mobileNumber.length() > SMSOTPConstants.MobileNumberEnrollment.MAX_MOBILE_NUMBER_LENGTH) {
-            return false;
-        }
-        String mobileNumberRegex;
-        try {
-            mobileNumberRegex = AuthenticatorUtils.getSmsAuthenticatorConfig(
-                    SMSOTPConstants.ConnectorConfig.SMS_OTP_MOBILE_NUMBER_REGEX, tenantDomain);
-        } catch (SMSOTPAuthenticatorServerException e) {
-            throw handleAuthErrorScenario(AuthenticatorConstants.ErrorMessages.ERROR_CODE_ERROR_GETTING_CONFIG, e);
-        }
-        if (StringUtils.isBlank(mobileNumberRegex)) {
-            mobileNumberRegex = SMSOTPConstants.MobileNumberEnrollment.DEFAULT_MOBILE_NUMBER_REGEX;
-        }
-        try {
-            return Pattern.matches(mobileNumberRegex, mobileNumber);
-        } catch (PatternSyntaxException e) {
-            // No number is accepted, so that a restriction intended by the configured regex is never bypassed.
-            LOG.error(String.format("The mobile number regex configured for SMS OTP in tenant: %s is not valid. " +
-                    "Hence, mobile numbers cannot be enrolled.", tenantDomain), e);
-            return false;
-        }
-    }
-
-    /**
-     * Get the maximum number of different mobile numbers that a user can submit for enrollment in a flow.
-     *
-     * @return Maximum number of mobile numbers.
-     */
-    private int getMaximumMobileNumberEnrollmentAttempts() {
-
-        String maxAttempts = getAuthenticatorParameter(
-                SMSOTPConstants.MobileNumberEnrollment.MAX_ENROLLMENT_ATTEMPTS_CONFIG);
-        if (NumberUtils.isDigits(maxAttempts) && Integer.parseInt(maxAttempts) > 0) {
-            return Integer.parseInt(maxAttempts);
-        }
-        return SMSOTPConstants.MobileNumberEnrollment.DEFAULT_MAX_ENROLLMENT_ATTEMPTS;
-    }
-
-    private String getAuthenticatorParameter(String parameterName) {
-
-        Map<String, String> parameterMap = getAuthenticatorConfig().getParameterMap();
-        return MapUtils.isNotEmpty(parameterMap) ? parameterMap.get(parameterName) : null;
-    }
-
-    private static boolean isAwaitingMobileNumber(AuthenticationContext context) {
-
-        return Boolean.TRUE.equals(context.getProperty(SMSOTPConstants.MobileNumberEnrollment.AWAITING_MOBILE_NUMBER));
-    }
-
-    private static String getPendingMobileNumber(AuthenticationContext context) {
-
-        Object mobileNumber = context.getProperty(SMSOTPConstants.MobileNumberEnrollment.PENDING_MOBILE_NUMBER);
-        return mobileNumber instanceof String ? (String) mobileNumber : null;
-    }
-
-    private static int getMobileNumberEnrollmentAttempts(AuthenticationContext context) {
-
-        Object attempts = context.getProperty(SMSOTPConstants.MobileNumberEnrollment.ENROLLMENT_ATTEMPTS);
-        return attempts instanceof Integer ? (Integer) attempts : 0;
-    }
-
-    private static void invalidateOTP(AuthenticationContext context) {
-
-        context.removeProperty(AuthenticatorConstants.OTP);
-        context.removeProperty(SMSOTPConstants.OTP_TOKEN);
-        context.removeProperty(SMSOTPConstants.MobileNumberEnrollment.OTP_SENT_TO_MOBILE_NUMBER);
-    }
-
-    private static void clearMobileNumberEnrollment(AuthenticationContext context) {
-
-        if (context.getProperty(SMSOTPConstants.MobileNumberEnrollment.OTP_SENT_TO_MOBILE_NUMBER) != null) {
-            /* An OTP sent to a number pending enrollment must not complete the authentication once the enrollment
-             is discontinued, such as when a mobile number is configured for the user in the meantime. */
-            invalidateOTP(context);
-        }
-        context.removeProperty(SMSOTPConstants.MobileNumberEnrollment.AWAITING_MOBILE_NUMBER);
-        context.removeProperty(SMSOTPConstants.MobileNumberEnrollment.PENDING_MOBILE_NUMBER);
-        context.removeProperty(SMSOTPConstants.MobileNumberEnrollment.OTP_SENT_TO_MOBILE_NUMBER);
-        context.removeProperty(SMSOTPConstants.MobileNumberEnrollment.ENROLLMENT_ATTEMPTS);
-        context.removeProperty(SMSOTPConstants.MobileNumberEnrollment.ENROLLMENT_ERROR);
-    }
-
-    /**
-     * Get the user identified by the subject attribute step of the authentication flow.
-     *
-     * @param context AuthenticationContext.
-     * @return The user, or null if no user is identified yet.
-     */
-    private static AuthenticatedUser getSubjectAuthenticatedUser(AuthenticationContext context) {
-
-        if (context.getSequenceConfig() == null || context.getSequenceConfig().getStepMap() == null) {
-            return null;
-        }
-        for (StepConfig stepConfig : context.getSequenceConfig().getStepMap().values()) {
-            if (stepConfig.isSubjectAttributeStep() && stepConfig.getAuthenticatedUser() != null) {
-                return new AuthenticatedUser(stepConfig.getAuthenticatedUser());
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Record the progress of a mobile number enrollment as a diagnostic log.
-     *
-     * @param resultMessage Message describing the progress.
-     * @param user          User who enrolls the mobile number.
-     * @param mobileNumber  Mobile number related to the progress. Can be null.
-     * @param resultStatus  Result status of the diagnostic log.
-     */
-    private void logMobileNumberEnrollment(String resultMessage, AuthenticatedUser user, String mobileNumber,
-                                           DiagnosticLog.ResultStatus resultStatus) {
-
-        if (!LoggerUtils.isDiagnosticLogsEnabled()) {
-            return;
-        }
-        DiagnosticLog.DiagnosticLogBuilder diagnosticLogBuilder = new DiagnosticLog.DiagnosticLogBuilder(
-                SMSOTPConstants.LogConstants.SMS_OTP_SERVICE,
-                SMSOTPConstants.LogConstants.ActionIDs.ENROLL_MOBILE_NUMBER);
-        diagnosticLogBuilder
-                .resultMessage(resultMessage)
-                .logDetailLevel(DiagnosticLog.LogDetailLevel.APPLICATION)
-                .resultStatus(resultStatus)
-                .inputParam(LogConstants.InputKeys.AUTHENTICATOR_NAME, getName());
-        if (user != null) {
-            diagnosticLogBuilder.inputParam(LogConstants.InputKeys.USER, user.getLoggableMaskedUserId());
-            diagnosticLogBuilder.inputParam(LogConstants.InputKeys.TENANT_DOMAIN, user.getTenantDomain());
-        }
-        if (StringUtils.isNotBlank(mobileNumber)) {
-            diagnosticLogBuilder.inputParam(SMSOTPConstants.LogConstants.InputKeys.SEND_TO,
-                    LoggerUtils.isLogMaskingEnable ? LoggerUtils.getMaskedContent(mobileNumber) : mobileNumber);
-        }
-        LoggerUtils.triggerDiagnosticLogEvent(diagnosticLogBuilder);
+        return enrollmentHandler;
     }
 }

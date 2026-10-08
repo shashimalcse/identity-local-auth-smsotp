@@ -128,9 +128,6 @@ public class SMSOTPConstants {
      */
     public static class MobileNumberEnrollment {
 
-        // Runtime parameter which can be used from the authentication script to opt an application out.
-        public static final String ENROL_USER_IN_AUTHENTICATION_FLOW = "enrolUserInAuthenticationFlow";
-
         // Authenticator parameters.
         public static final String MOBILE_NUMBER_REQUEST_PAGE_URL_CONFIG = "SMSOTPMobileNumberRequestPageURL";
         public static final String MAX_ENROLLMENT_ATTEMPTS_CONFIG = "MobileNumberEnrollmentMaxAttempts";
@@ -141,21 +138,10 @@ public class SMSOTPConstants {
         // Applied after removing whitespaces and hyphens from the submitted value.
         public static final String DEFAULT_MOBILE_NUMBER_REGEX = "^\\+?[0-9]{7,15}$";
 
-        // Authentication context properties.
-        public static final String AWAITING_MOBILE_NUMBER = "smsOtpEnrollment.awaitingMobileNumber";
-        public static final String PENDING_MOBILE_NUMBER = "smsOtpEnrollment.pendingMobileNumber";
-        // Mobile number to which the OTP in the context was sent.
-        public static final String OTP_SENT_TO_MOBILE_NUMBER = "smsOtpEnrollment.otpSentToMobileNumber";
-        public static final String ENROLLMENT_ATTEMPTS = "smsOtpEnrollment.attempts";
-        public static final String ENROLLMENT_ERROR = "smsOtpEnrollment.error";
-
-        // Error query params read by the mobile number request page and the error page.
-        public static final String ERROR_MOBILE_NUMBER_INVALID_QUERY_PARAMS =
-                "&authFailure=true&authFailureMsg=sms.otp.mobile.number.invalid";
-        public static final String ERROR_ENROLLMENT_FAILED_QUERY_PARAMS =
-                "&authFailure=true&authFailureMsg=sms.otp.mobile.number.enrollment.failed";
-        public static final String ERROR_ENROLLMENT_ATTEMPTS_EXCEEDED_QUERY_PARAMS =
-                "&authFailure=true&authFailureMsg=sms.otp.mobile.number.enrollment.attempts.exceeded";
+        /* Prefix of the error message keys shown on the mobile number request page and the error page:
+         sms.otp.mobile.number.invalid, sms.otp.mobile.number.enrollment.failed and
+         sms.otp.mobile.number.enrollment.attempts.exceeded. */
+        public static final String MESSAGE_KEY_PREFIX = "sms.otp.mobile.number";
 
         // App native authentication.
         public static final String DISPLAY_MOBILE_NUMBER = "Mobile Number";
@@ -201,7 +187,6 @@ public class SMSOTPConstants {
         public static class ActionIDs {
 
             public static final String SEND_SMS_OTP = "send-sms-otp";
-            public static final String ENROLL_MOBILE_NUMBER = "enroll-mobile-number";
         }
 
         /**
@@ -264,13 +249,7 @@ public class SMSOTPConstants {
         ERROR_CODE_NO_FEDERATED_USER("65025", "No federated user found"),
         ERROR_CODE_USER_ID_NOT_FOUND("65026", "User id is not available for user"),
         ERROR_CODE_ERROR_GETTING_APPLICATION("65027", "Error while getting the application id"),
-        ERROR_CODE_CONNECTING_THROTTLER_SERVICE("65028", "Error connecting throttler service"),
-        ERROR_CODE_REDIRECTING_TO_MOBILE_NUMBER_REQUEST_PAGE("65029",
-                "Error occurred while redirecting to the mobile number request page"),
-        ERROR_CODE_MOBILE_NUMBER_ALREADY_CONFIGURED("65030",
-                "A mobile number was configured for user: %s while a mobile number enrollment was in progress"),
-        ERROR_CODE_ERROR_ENROLLING_MOBILE_NUMBER("65031",
-                "Error occurred while enrolling the mobile number of user: %s");
+        ERROR_CODE_CONNECTING_THROTTLER_SERVICE("65028", "Error connecting throttler service");
 
         private final String code;
         private final String message;
