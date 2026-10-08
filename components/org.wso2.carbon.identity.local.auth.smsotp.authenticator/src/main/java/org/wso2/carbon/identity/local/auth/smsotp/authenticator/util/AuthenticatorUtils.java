@@ -153,11 +153,10 @@ public class AuthenticatorUtils {
     }
 
     /**
-     * Get the URL of the page which requests a mobile number from a user who does not have one.
+     * Get the mobile number request page URL.
      *
-     * @param mobileNumberRequestPageUrl Page URL configured for the authenticator. The default page is used when this
-     *                                   is blank.
-     * @return Absolute public URL of the mobile number request page.
+     * @param mobileNumberRequestPageUrl Configured page URL. The default page is used when blank.
+     * @return URL of the mobile number request page.
      * @throws AuthenticationFailedException If an error occurred while building the URL.
      */
     public static String getMobileNumberRequestPageUrl(String mobileNumberRequestPageUrl)

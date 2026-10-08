@@ -154,7 +154,6 @@ public class SMSOTPAuthenticator extends AbstractOTPAuthenticator implements Loc
         if (context.isLogoutRequest()) {
             return AuthenticatorConstants.AuthenticationScenarios.LOGOUT;
         } else if (getEnrollmentHandler().isValueSubmission(request, context)) {
-            // A mobile number submitted for enrollment initiates sending an OTP to that number.
             return AuthenticatorConstants.AuthenticationScenarios.INITIAL_OTP;
         } else if (!SMS_OTP_AUTHENTICATOR_NAME.equals(context.getCurrentAuthenticator()) ||
                 !context.isRetrying() && StringUtils.isBlank(request.getParameter(CODE)) &&
@@ -392,7 +391,6 @@ public class SMSOTPAuthenticator extends AbstractOTPAuthenticator implements Loc
         String tenantDomain = authenticationContext.getTenantDomain();
         String mobileNumber = resolveMobileNoOfAuthenticatedUser(authenticatedUser, tenantDomain,
                 authenticationContext, isInitialFederationAttempt);
-        // Binds the OTP to the number it is sent to, so that only that number can be enrolled with the OTP.
         getEnrollmentHandler().recordOTPSent(authenticationContext, mobileNumber);
 
         Map<String, Object> metaProperties = new HashMap<>();
@@ -921,8 +919,7 @@ public class SMSOTPAuthenticator extends AbstractOTPAuthenticator implements Loc
             }
             mobile = getUserClaimValueFromUserStore(user, context);
             if (StringUtils.isBlank(mobile)) {
-                /* A user who does not have a mobile number may be enrolling one. The OTP is then sent to the number
-                 pending enrollment, which is saved to the profile only after the OTP is verified. */
+                // The OTP is sent to the number pending enrollment, if any.
                 mobile = getEnrollmentHandler().getPendingValue(context);
             }
         }
@@ -969,7 +966,6 @@ public class SMSOTPAuthenticator extends AbstractOTPAuthenticator implements Loc
         List<AuthenticatorParamMetadata> authenticatorParamMetadataList = new ArrayList<>();
         List<String> requiredParams = new ArrayList<>();
         if (context != null && getEnrollmentHandler().isAwaitingValue(context)) {
-            // The user does not have a mobile number, and is requested to enter one to enroll.
             AuthenticatorParamMetadata mobileNumberMetadata = new AuthenticatorParamMetadata(
                     SMSOTPConstants.MOBILE_NUMBER, SMSOTPConstants.MobileNumberEnrollment.DISPLAY_MOBILE_NUMBER,
                     FrameworkConstants.AuthenticatorParamType.STRING, 0, Boolean.FALSE,
@@ -1059,7 +1055,7 @@ public class SMSOTPAuthenticator extends AbstractOTPAuthenticator implements Loc
 
         context.removeProperty(SMSOTPConstants.IS_REDIRECT_TO_SMS_OTP);
         super.processAuthenticationResponse(request, response, context);
-        // Reaching here means the OTP is verified, since SMS OTP authentication succeeds only by verifying the OTP.
+        // Reaching here means the OTP is verified.
         getEnrollmentHandler().completeEnrollment(context);
     }
 
@@ -1076,7 +1072,7 @@ public class SMSOTPAuthenticator extends AbstractOTPAuthenticator implements Loc
     }
 
     /**
-     * Get the handler which lets a user who does not have a mobile number enroll one during the authentication flow.
+     * Get the mobile number enrollment handler.
      *
      * @return Mobile number enrollment handler.
      */

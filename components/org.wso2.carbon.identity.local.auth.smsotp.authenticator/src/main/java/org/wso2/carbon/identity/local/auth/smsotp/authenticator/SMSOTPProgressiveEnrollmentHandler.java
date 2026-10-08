@@ -31,8 +31,7 @@ import org.wso2.carbon.identity.recovery.IdentityRecoveryConstants;
 import org.wso2.carbon.identity.recovery.util.Utils;
 
 /**
- * Lets a user who does not have a mobile number enroll one during the authentication flow, by verifying the SMS OTP
- * sent to that number.
+ * Mobile number enrollment handler of the SMS OTP authenticator.
  */
 public class SMSOTPProgressiveEnrollmentHandler extends AbstractOTPProgressiveEnrollmentHandler {
 
@@ -104,10 +103,6 @@ public class SMSOTPProgressiveEnrollmentHandler extends AbstractOTPProgressiveEn
         context.removeProperty(SMSOTPConstants.OTP_TOKEN);
     }
 
-    /**
-     * Skip the verification which is otherwise initiated on mobile number updates when mobile number verification is
-     * enabled, since the number is already verified by the SMS OTP.
-     */
     @Override
     protected void skipVerificationOnUpdate() {
 
@@ -121,12 +116,7 @@ public class SMSOTPProgressiveEnrollmentHandler extends AbstractOTPProgressiveEn
         Utils.unsetThreadLocalToSkipSendingSmsOtpVerificationOnUpdate();
     }
 
-    /**
-     * Remove whitespaces and hyphens, which are commonly used to format mobile numbers.
-     *
-     * @param value Mobile number submitted by the user.
-     * @return Mobile number without formatting characters, or null if blank.
-     */
+    // Removes whitespaces and hyphens used to format mobile numbers.
     @Override
     protected String normalize(String value) {
 

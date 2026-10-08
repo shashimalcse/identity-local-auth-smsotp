@@ -123,8 +123,7 @@ public class SMSOTPConstants {
     }
 
     /**
-     * Constants related to enrolling a mobile number during the authentication flow, for a user who does not have a
-     * mobile number configured.
+     * Constants related to mobile number enrollment.
      */
     public static class MobileNumberEnrollment {
 
@@ -135,12 +134,8 @@ public class SMSOTPConstants {
         public static final String MOBILE_NUMBER_REQUEST_PAGE = "authenticationendpoint/mobile.jsp";
         public static final int DEFAULT_MAX_ENROLLMENT_ATTEMPTS = 3;
         public static final int MAX_MOBILE_NUMBER_LENGTH = 32;
-        // Applied after removing whitespaces and hyphens from the submitted value.
         public static final String DEFAULT_MOBILE_NUMBER_REGEX = "^\\+?[0-9]{7,15}$";
 
-        /* Prefix of the error message keys shown on the mobile number request page and the error page:
-         sms.otp.mobile.number.invalid, sms.otp.mobile.number.enrollment.failed and
-         sms.otp.mobile.number.enrollment.attempts.exceeded. */
         public static final String MESSAGE_KEY_PREFIX = "sms.otp.mobile.number";
 
         // App native authentication.
