@@ -103,7 +103,7 @@ public class SMSOTPAuthenticator extends AbstractOTPAuthenticator implements Loc
 
     private static final Log LOG = LogFactory.getLog(SMSOTPAuthenticator.class);
     private static final long serialVersionUID = 850244886656426295L;
-    private static final AbstractOTPProgressiveEnrollmentHandler enrollmentHandler =
+    private static final AbstractOTPProgressiveEnrollmentHandler ENROLLMENT_HANDLER =
             new SMSOTPProgressiveEnrollmentHandler();
 
     private static final String SMS_OTP_SENT = "SMSOTPSent";
@@ -1078,6 +1078,6 @@ public class SMSOTPAuthenticator extends AbstractOTPAuthenticator implements Loc
      */
     protected AbstractOTPProgressiveEnrollmentHandler getEnrollmentHandler() {
 
-        return enrollmentHandler;
+        return ENROLLMENT_HANDLER;
     }
 }
